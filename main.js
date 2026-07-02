@@ -607,10 +607,10 @@ function createUI() {
       font-family:'Press Start 2P',monospace;font-size:26px;color:white;
       text-shadow:2px 2px 0 rgba(0,0,0,0.25);opacity:0;transition:opacity 0.4s;pointer-events:none;">Hello!</div>
 
-    <div id="rule-tip" style="position:absolute;top:38%;left:50%;transform:translateX(-50%);
-      width:min(300px,78vw);text-align:center;
-      font-family:'Noto Sans SC',sans-serif;font-size:13px;color:white;line-height:1.6;
-      background:rgba(0,0,0,0.34);border-radius:12px;padding:10px 16px;
+    <div id="rule-tip" style="position:absolute;
+      width:min(280px,74vw);text-align:center;
+      font-family:'Noto Sans SC',sans-serif;font-size:12px;color:white;line-height:1.5;
+      background:rgba(0,0,0,0.34);border-radius:12px;padding:8px 14px;
       text-shadow:1px 1px 2px rgba(0,0,0,0.3);opacity:0;transition:opacity 0.4s;pointer-events:none;">
       Hold to charge, release to jump.<br>Slide off the edge while charging to cancel.
     </div>
@@ -753,6 +753,18 @@ function hideRuleTip() {
   const el = document.getElementById('rule-tip');
   if (el) el.style.opacity = '0';
 }
+function updateRuleTipPosition() {
+  const el = document.getElementById('rule-tip');
+  if (!el || el.style.opacity === '0' || el.style.opacity === '' || !joiModel) return;
+  const headPos = joiModel.position.clone();
+  headPos.y += 2.1; // 头顶上方
+  const pos = headPos.project(camera);
+  const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
+  const y = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  el.style.transform = 'translate(-50%, -100%)';
+}
 let emergencyHintShown = false; // 只在本次访问中第一次遇到Emergency时提示一次
 function showEmergencyHintIfFirstTime() {
   if (emergencyHintShown) return;
@@ -888,6 +900,7 @@ function setupAnimationFinishListener() {
           camera = orthoCamera;
           playBg('bgGame');
           startBirds();
+          showRuleTip();
         }
         break;
       case 'Thankful':
@@ -1336,7 +1349,6 @@ function resetGame(seed) {
   isCharging = false;
   isJumping = false;
   jumpCount = 0;
-  showRuleTip();
   currentPlatformX = 0;
   currentPlatformZ = 0;
   fallVelocityY = 0;
@@ -1451,6 +1463,9 @@ function animate() {
     }
     if (camera.position.distanceTo(cameraTargetPos) < 0.01 && !cameraLookTarget) cameraTargetPos = null;
   }
+
+  // 第一台规则提示：跟随Joi头顶投影位置
+  updateRuleTipPosition();
 
   // Emergency按钮跟随Joi（Teeter期间，仅横屏；竖屏固定底部居中不跟随）
   if (teeterRescueOpen && joiModel && window.innerWidth >= window.innerHeight) {
