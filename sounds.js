@@ -1,19 +1,22 @@
 // ===================================================
 // 音效管理模块 sounds.js
+// 背景音乐 + 一次性音效统一用 Web Audio API 播放
+// （iOS Safari上<audio>标签和Web Audio API混用会互相抢占音频通道，
+//   表现为背景音乐被音效打断/卡顿，所以两者统一到同一套系统里）
 // ===================================================
 
 const SOUND_PATH = './sounds/';
 
 // ===== 音效定义 =====
 const SOUNDS = {
-  // 背景音乐（循环，仍用<audio>播放，不需要叠放触发）
+  // 背景音乐（循环）
   bgGame:    { file: 'mixkit-forever-love-38.mp3',                         loop: true,  volume: 0.4  },
   bgStart:   { file: 'mixkit-romantic-getaway-88.mp3',                     loop: true,  volume: 0.4  },
   bgResult:  { file: 'mixkit-miss-you-592.mp3',                            loop: true,  volume: 0.35 },
   bgStats:   { file: 'mixkit-i-love-you-mommy-831.mp3',                    loop: true,  volume: 0.35 },
   birds:     { file: 'mixkit-morning-birds-2472.mp3',                      loop: true,  volume: 0.15 },
 
-  // 一次性打击音效（改用Web Audio API，杜绝重复解码延迟）
+  // 一次性打击音效
   landNormal:  { file: 'mixkit-heavy-grass-step-1922.wav',                 volume: 0.6  },
   landGrass:   { file: 'mixkit-funny-cartoon-melody-2881.wav',             volume: 0.5  },
   landFlower:  { file: 'mixkit-liquid-bubble-3000.wav',                    volume: 0.6  },
@@ -26,18 +29,22 @@ const SOUNDS = {
   dogBounce:   { file: 'mixkit-happy-puppy-barks-741.wav',                 volume: 0.5  },
 };
 
-// 背景/环境音（循环track）用<audio>播放的key列表
 const BG_KEYS = ['bgGame', 'bgStart', 'bgResult', 'bgStats', 'birds'];
-// 一次性打击音效key列表
-const ONE_SHOT_KEYS = Object.keys(SOUNDS).filter((k) => !BG_KEYS.includes(k));
+const ALL_KEYS = Object.keys(SOUNDS);
 
 // ===== 内部状态 =====
-const bgAudioCache = {};      // 背景/环境音：<audio>元素
-const bufferCache = {};       // 一次性音效：解码后的AudioBuffer
 let audioCtx = null;
-let currentBg = null;
+const bufferCache = {};       // key -> 已解码的 AudioBuffer
+const decodePromises = {};    // key -> 正在进行的解码Promise（避免重复解码同一个文件）
 let muted = false;
+
+let currentBgKey = null;      // 当前"想要"播放的背景音（不代表此刻一定在响）
+let currentBgSource = null;   // 正在播放的背景音source节点，null代表暂停/未播放
+let currentBgGain = null;
+
 let birdsPlaying = false;
+let birdsSource = null;
+let birdsGain = null;
 
 // ===== Web Audio Context（懒创建，首次调用需在用户交互回调内以满足浏览器自动播放策略） =====
 function getAudioContext() {
@@ -51,102 +58,183 @@ function getAudioContext() {
   return audioCtx;
 }
 
-// ===== 预加载 =====
-export function preloadSounds() {
-  // 背景/环境音：<audio>预加载
-  BG_KEYS.forEach((key) => {
-    const cfg = SOUNDS[key];
-    const audio = new Audio(SOUND_PATH + cfg.file);
-    audio.loop = cfg.loop;
-    audio.volume = cfg.volume;
-    audio.preload = 'auto';
-    bgAudioCache[key] = audio;
-  });
+// ===== 确保某个音效已解码好，返回Promise<AudioBuffer>（已解码的直接秒resolve，没解码的立刻插队解码） =====
+function ensureDecoded(key) {
+  if (bufferCache[key]) return Promise.resolve(bufferCache[key]);
+  if (decodePromises[key]) return decodePromises[key];
 
-  // 一次性音效：抓取并解码进内存（Web Audio API），之后播放零延迟
+  const cfg = SOUNDS[key];
   const ctx = getAudioContext();
-  ONE_SHOT_KEYS.forEach((key) => {
-    if (bufferCache[key]) return; // 已加载过（比如preloadSounds被多次触发）
-    const cfg = SOUNDS[key];
-    fetch(SOUND_PATH + cfg.file)
-      .then((res) => res.arrayBuffer())
-      .then((data) => ctx.decodeAudioData(data))
-      .then((buffer) => { bufferCache[key] = buffer; })
-      .catch((err) => console.warn('音效解码失败：', key, err));
-  });
-
-  console.log('音效预加载完成，共', Object.keys(SOUNDS).length, '个');
+  const p = fetch(SOUND_PATH + cfg.file)
+    .then((res) => res.arrayBuffer())
+    .then((data) => ctx.decodeAudioData(data))
+    .then((buffer) => {
+      bufferCache[key] = buffer;
+      delete decodePromises[key];
+      return buffer;
+    })
+    .catch((err) => {
+      delete decodePromises[key];
+      throw err;
+    });
+  decodePromises[key] = p;
+  return p;
 }
 
-// ===== 播放一次性音效（Web Audio API，瞬时触发，可叠放） =====
+// ===== 预加载：按顺序排队解码全部音效，避免同时解码多个文件占满主线程 =====
+export function preloadSounds() {
+  (async () => {
+    for (const key of ALL_KEYS) {
+      try {
+        await ensureDecoded(key);
+      } catch (err) {
+        console.warn('音效解码失败：', key, err);
+      }
+      // 让出一点时间片，避免连续解码挤占背景音乐播放
+      await new Promise((r) => setTimeout(r, 30));
+    }
+  })();
+  console.log('音效预加载已开始，共', ALL_KEYS.length, '个');
+}
+
+// ===== 播放一次性音效 =====
 export function playSound(key) {
   if (muted) return;
-  const buffer = bufferCache[key];
   const cfg = SOUNDS[key];
-  if (!buffer || !cfg) {
-    console.warn('音效尚未就绪或不存在：', key);
-    return;
+  if (!cfg) { console.warn('音效不存在：', key); return; }
+
+  const buffer = bufferCache[key];
+  if (buffer) {
+    startOneShot(key, buffer);
+  } else {
+    // 还没解码好（比如刚进游戏就快速触发），插队解码后立刻播放
+    ensureDecoded(key).then((b) => { if (!muted) startOneShot(key, b); }).catch(() => {});
   }
+}
+
+function startOneShot(key, buffer) {
   const ctx = getAudioContext();
+  const cfg = SOUNDS[key];
   const source = ctx.createBufferSource();
   source.buffer = buffer;
   const gain = ctx.createGain();
   gain.gain.value = cfg.volume;
-  source.connect(gain);
-  gain.connect(ctx.destination);
+  source.connect(gain).connect(ctx.destination);
   source.start(0);
 }
 
 // ===== 背景音乐 =====
+function startBgSource(key, buffer) {
+  const ctx = getAudioContext();
+  const cfg = SOUNDS[key];
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.loop = true;
+  const gain = ctx.createGain();
+  gain.gain.value = cfg.volume;
+  source.connect(gain).connect(ctx.destination);
+  source.start(0);
+  return { source, gain };
+}
+
 export function playBg(key) {
-  if (currentBg === key) return;
+  if (currentBgKey === key && currentBgSource) return;
   stopBg();
-  currentBg = key;
+  currentBgKey = key;
   if (muted) return;
-  const audio = bgAudioCache[key];
-  if (!audio) return;
-  audio.currentTime = 0;
-  audio.play().catch(() => {});
+
+  const buffer = bufferCache[key];
+  if (buffer) {
+    const r = startBgSource(key, buffer);
+    currentBgSource = r.source;
+    currentBgGain = r.gain;
+  } else {
+    ensureDecoded(key).then((b) => {
+      if (currentBgKey !== key || muted) return; // 解码期间被切换/静音了，放弃
+      const r = startBgSource(key, b);
+      currentBgSource = r.source;
+      currentBgGain = r.gain;
+    }).catch((err) => console.warn('背景音乐加载失败：', key, err));
+  }
 }
 
 export function stopBg() {
-  if (!currentBg) return;
-  const a = bgAudioCache[currentBg];
-  if (a) { a.pause(); a.currentTime = 0; }
-  currentBg = null;
+  if (currentBgSource) {
+    try { currentBgSource.stop(); } catch (err) {}
+    currentBgSource = null;
+    currentBgGain = null;
+  }
+  currentBgKey = null;
 }
 
+// 暂停：不记录播放位置，恢复时直接从头重新放（背景音是循环氛围音，感知不出差别）
 export function pauseBg() {
-  if (!currentBg) return;
-  bgAudioCache[currentBg]?.pause();
+  if (currentBgSource) {
+    try { currentBgSource.stop(); } catch (err) {}
+    currentBgSource = null;
+    currentBgGain = null;
+    // currentBgKey 保留，resumeBg() 时知道要重新播放哪一首
+  }
 }
 
 export function resumeBg() {
-  if (!currentBg || muted) return;
-  bgAudioCache[currentBg]?.play().catch(() => {});
+  if (!currentBgKey || currentBgSource || muted) return;
+  const key = currentBgKey;
+  const buffer = bufferCache[key];
+  if (buffer) {
+    const r = startBgSource(key, buffer);
+    currentBgSource = r.source;
+    currentBgGain = r.gain;
+  } else {
+    ensureDecoded(key).then((b) => {
+      if (currentBgKey !== key || currentBgSource || muted) return;
+      const r = startBgSource(key, b);
+      currentBgSource = r.source;
+      currentBgGain = r.gain;
+    }).catch(() => {});
+  }
 }
 
 // ===== 鸟鸣叠加 =====
 export function startBirds() {
   if (birdsPlaying || muted) return;
   birdsPlaying = true;
-  bgAudioCache['birds']?.play().catch(() => {});
+  const buffer = bufferCache['birds'];
+  if (buffer) {
+    const r = startBgSource('birds', buffer);
+    birdsSource = r.source;
+    birdsGain = r.gain;
+  } else {
+    ensureDecoded('birds').then((b) => {
+      if (!birdsPlaying || muted) return;
+      const r = startBgSource('birds', b);
+      birdsSource = r.source;
+      birdsGain = r.gain;
+    }).catch(() => {});
+  }
 }
 
 export function stopBirds() {
   birdsPlaying = false;
-  const a = bgAudioCache['birds'];
-  if (a) { a.pause(); a.currentTime = 0; }
+  if (birdsSource) {
+    try { birdsSource.stop(); } catch (err) {}
+    birdsSource = null;
+    birdsGain = null;
+  }
 }
 
 // ===== 静音切换 =====
 export function toggleMute() {
   muted = !muted;
   if (muted) {
-    Object.values(bgAudioCache).forEach((a) => { if (!a.paused) a.pause(); });
+    if (currentBgSource) { try { currentBgSource.stop(); } catch (err) {} currentBgSource = null; currentBgGain = null; }
+    if (birdsSource) { try { birdsSource.stop(); } catch (err) {} birdsSource = null; birdsGain = null; }
   } else {
     resumeBg();
-    if (birdsPlaying) bgAudioCache['birds']?.play().catch(() => {});
+    if (birdsPlaying) {
+      birdsPlaying = false; // 重置标记，让startBirds()不会因为"已经在播"而提前返回
+      startBirds();
+    }
   }
   return muted;
 }
@@ -156,9 +244,9 @@ export function isMuted() { return muted; }
 // ===== 音量 =====
 export function setBgVolume(vol) {
   const v = Math.max(0, Math.min(1, vol));
-  BG_KEYS.forEach((key) => {
-    if (bgAudioCache[key]) bgAudioCache[key].volume = v;
-  });
+  BG_KEYS.forEach((key) => { if (SOUNDS[key]) SOUNDS[key].volume = v; });
+  if (currentBgGain) currentBgGain.gain.value = v;
+  if (birdsGain) birdsGain.gain.value = v;
 }
 
 // ===== 落地音效便捷函数 =====
