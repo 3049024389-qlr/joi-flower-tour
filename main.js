@@ -591,15 +591,15 @@ function createUI() {
 
     <div id="float-container" style="position:absolute;top:0;left:0;width:100%;height:100%;"></div>
 
-    <div id="score-rules" style="position:absolute;bottom:20px;left:20px;
-      font-family:'Noto Sans SC',sans-serif;font-size:13px;color:white;
-      text-shadow:1px 1px 2px rgba(0,0,0,0.4);line-height:2.2;pointer-events:none;">
-      <div style="font-size:14px;font-weight:700;margin-bottom:4px;">SCORE RULES</div>
-      <div><img src="./icons/lowpoly_egg-icon.png" style="width:16px;vertical-align:middle;margin-right:6px;">Egg +6 &nbsp; <img src="./icons/low_poly_basket-icon.png" style="width:16px;vertical-align:middle;margin-right:6px;">Basket = egg x2</div>
-      <div><img src="./icons/chicken-icon.png" style="width:16px;vertical-align:middle;margin-right:6px;">Chicken = next platform x2</div>
-      <div><img src="./icons/margarita_flower-icon.png" style="width:16px;vertical-align:middle;margin-right:6px;"><img src="./icons/calendula_flower-icon.png" style="width:16px;vertical-align:middle;margin-right:6px;">Flower platform +5</div>
-      <div><img src="./icons/luna_the_lowpoly_dog-icon.png" style="width:16px;vertical-align:middle;margin-right:6px;">Dog +20 / perfect +50</div>
-      <div style="margin-top:2px;color:rgba(255,255,255,0.55);font-size:12px;">10 perfect combo → dog appears</div>
+    <div id="score-rules" class="score-rules-panel" style="position:absolute;bottom:20px;left:20px;
+      font-family:'Noto Sans SC',sans-serif;color:white;
+      text-shadow:1px 1px 2px rgba(0,0,0,0.4);pointer-events:none;">
+      <div class="score-rules-title">SCORE RULES</div>
+      <div><img class="score-rules-icon" src="./icons/lowpoly_egg-icon.png">Egg +6 &nbsp; <img class="score-rules-icon" src="./icons/low_poly_basket-icon.png">Basket = egg x2</div>
+      <div><img class="score-rules-icon" src="./icons/chicken-icon.png">Chicken = next platform x2</div>
+      <div><img class="score-rules-icon" src="./icons/margarita_flower-icon.png"><img class="score-rules-icon" src="./icons/calendula_flower-icon.png">Flower platform +5</div>
+      <div><img class="score-rules-icon" src="./icons/luna_the_lowpoly_dog-icon.png">Dog +20 / perfect +50</div>
+      <div class="score-rules-note">10 perfect combo → dog appears</div>
     </div>
 
     <button id="emergency-btn" style="
@@ -627,6 +627,38 @@ style.textContent = `
   @keyframes emergencyPulse {
     from { transform: scale(1); box-shadow: 0 4px 16px rgba(255,80,80,0.5); }
     to   { transform: scale(1.12); box-shadow: 0 6px 24px rgba(255,80,80,0.8); }
+  }
+
+  .score-rules-panel {
+    font-size: 13px;
+    line-height: 2.2;
+    max-width: 260px;
+  }
+  .score-rules-title {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .score-rules-icon {
+    width: 16px;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  .score-rules-note {
+    margin-top: 2px;
+    color: rgba(255,255,255,0.55);
+    font-size: 12px;
+  }
+
+  @media (max-width: 480px) {
+    .score-rules-panel {
+      font-size: 10px;
+      line-height: 1.7;
+      max-width: 150px;
+    }
+    .score-rules-title { font-size: 11px; margin-bottom: 2px; }
+    .score-rules-icon { width: 12px; margin-right: 3px; }
+    .score-rules-note { font-size: 9px; }
   }
 `;
 document.head.appendChild(style);
@@ -1132,6 +1164,8 @@ function onResize() {
   perspCamera.aspect = asp;
   perspCamera.updateProjectionMatrix();
 
+  if (statsScreenActive) applyStatsCameraFraming();
+
   renderer.setSize(w, h);
 }
 window.addEventListener('resize', onResize);
@@ -1356,6 +1390,43 @@ document.addEventListener('touchstart', () => { preloadSounds(); }, { once: true
 // ===================================================
 // 初始化结算页面
 // ===================================================
+let statsScreenActive = false;
+
+// 根据横竖屏切换Stats页面相机取景参数
+function applyStatsCameraFraming() {
+  if (!joiModel) return;
+  const portrait = window.innerWidth < window.innerHeight;
+  if (portrait) {
+    // 竖屏：没有多余横向空间做偏移，Joi居中，镜头拉远保证全身入镜
+    perspCamera.fov = 34;
+    perspCamera.updateProjectionMatrix();
+    perspCamera.position.set(
+      joiModel.position.x,
+      joiModel.position.y + 1.9,
+      joiModel.position.z + 7.2
+    );
+    perspCamera.lookAt(
+      joiModel.position.x,
+      joiModel.position.y + 0.9,
+      joiModel.position.z
+    );
+  } else {
+    // 横屏：Joi偏左（相机向右偏移），距离拉远
+    perspCamera.fov = 28;
+    perspCamera.updateProjectionMatrix();
+    perspCamera.position.set(
+      joiModel.position.x,
+      joiModel.position.y + 1.6,
+      joiModel.position.z + 5.0
+    );
+    perspCamera.lookAt(
+      joiModel.position.x + 0.6,
+      joiModel.position.y + 0.8,
+      joiModel.position.z
+    );
+  }
+}
+
 createResultScreen({
   onRestart: (seed) => {
     stopBg();
@@ -1376,6 +1447,7 @@ createResultScreen({
     playBg('bgStart');
   },
   onShowStats: () => {
+    statsScreenActive = true;
     stopBg();
     playBg('bgStats');
     statsInteractCount = 0;
@@ -1399,20 +1471,9 @@ createResultScreen({
         playAnimation('StandingIdle');
       }
 
-      // 透视相机：Joi偏左（相机向右偏移），距离拉远
-      perspCamera.fov = 28;
-      perspCamera.updateProjectionMatrix();
+      // 透视相机：按当前横竖屏取景
       camera = perspCamera;
-      perspCamera.position.set(
-        joiModel.position.x,
-        joiModel.position.y + 1.6,
-        joiModel.position.z + 5.0
-      );
-      perspCamera.lookAt(
-        joiModel.position.x + 0.6,
-        joiModel.position.y + 0.8,
-        joiModel.position.z
-      );
+      applyStatsCameraFraming();
       cameraTargetPos  = null;
       cameraLookTarget = null;
 
@@ -1431,6 +1492,7 @@ createResultScreen({
     }
   },
   onHideStats: () => {
+    statsScreenActive = false;
     stopBg();
     playBg('bgResult');
     platforms.forEach(p => { p.group.visible = true; });
