@@ -31,6 +31,7 @@ const perspCamera = new THREE.PerspectiveCamera(28, window.innerWidth / window.i
 
 // 当前激活的相机
 let camera = orthoCamera;
+let statsScreenActive = false; // Stats页面是否正打开（用于横竖屏切换时重新取景）
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -1169,6 +1170,7 @@ function onResize() {
   renderer.setSize(w, h);
 }
 window.addEventListener('resize', onResize);
+onResize(); // 加载时主动应用一次（尤其手机竖屏直接打开、从未真正触发过resize事件的情况）
 
 // ===================================================
 // 加载Joi
@@ -1390,7 +1392,6 @@ document.addEventListener('touchstart', () => { preloadSounds(); }, { once: true
 // ===================================================
 // 初始化结算页面
 // ===================================================
-let statsScreenActive = false;
 
 // 根据横竖屏切换Stats页面相机取景参数
 function applyStatsCameraFraming() {
@@ -1406,7 +1407,7 @@ function applyStatsCameraFraming() {
       joiModel.position.z + 7.2
     );
     perspCamera.lookAt(
-      joiModel.position.x,
+      joiModel.position.x + 0.35,
       joiModel.position.y + 0.9,
       joiModel.position.z
     );
