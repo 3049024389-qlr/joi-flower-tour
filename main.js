@@ -603,6 +603,24 @@ function createUI() {
       <div class="score-rules-note">10 perfect combo → dog appears</div>
     </div>
 
+    <div id="greeting-hello" style="position:absolute;top:36%;left:50%;transform:translateX(-50%);
+      font-family:'Press Start 2P',monospace;font-size:26px;color:white;
+      text-shadow:2px 2px 0 rgba(0,0,0,0.25);opacity:0;transition:opacity 0.4s;pointer-events:none;">Hello!</div>
+
+    <div id="rule-tip" style="position:absolute;top:38%;left:50%;transform:translateX(-50%);
+      width:min(300px,78vw);text-align:center;
+      font-family:'Noto Sans SC',sans-serif;font-size:13px;color:white;line-height:1.6;
+      background:rgba(0,0,0,0.34);border-radius:12px;padding:10px 16px;
+      text-shadow:1px 1px 2px rgba(0,0,0,0.3);opacity:0;transition:opacity 0.4s;pointer-events:none;">
+      Hold to charge, release to jump.<br>Slide off the edge while charging to cancel.
+    </div>
+
+    <div id="emergency-hint" style="position:fixed;
+      font-family:'Noto Sans SC',sans-serif;font-size:11px;color:white;
+      background:rgba(255,80,80,0.92);border-radius:10px;padding:6px 10px;
+      white-space:nowrap;text-shadow:1px 1px 2px rgba(0,0,0,0.3);
+      opacity:0;transition:opacity 0.3s;pointer-events:none;">Tap rapidly to keep your balance!</div>
+
     <button id="emergency-btn" style="
       display:none;position:fixed;pointer-events:all;
       width:72px;height:72px;border-radius:50%;border:none;
@@ -718,12 +736,71 @@ function showFloatingText(text, type) {
   setTimeout(() => el.remove(), 1400);
 }
 
+// ===== 新手引导提示 =====
+function showGreetingHello() {
+  const el = document.getElementById('greeting-hello');
+  if (el) el.style.opacity = '1';
+}
+function hideGreetingHello() {
+  const el = document.getElementById('greeting-hello');
+  if (el) el.style.opacity = '0';
+}
+function showRuleTip() {
+  const el = document.getElementById('rule-tip');
+  if (el) el.style.opacity = '1';
+}
+function hideRuleTip() {
+  const el = document.getElementById('rule-tip');
+  if (el) el.style.opacity = '0';
+}
+let emergencyHintShown = false; // 只在本次访问中第一次遇到Emergency时提示一次
+function showEmergencyHintIfFirstTime() {
+  if (emergencyHintShown) return;
+  emergencyHintShown = true;
+  const hint = document.getElementById('emergency-hint');
+  if (!hint) return;
+  hint.style.opacity = '1';
+  positionEmergencyHint();
+  setTimeout(() => { hint.style.opacity = '0'; }, 3200);
+}
+function positionEmergencyHint() {
+  const hint = document.getElementById('emergency-hint');
+  if (!hint) return;
+  const portrait = window.innerWidth < window.innerHeight;
+  if (portrait) {
+    // 竖屏：Emergency按钮固定在底部居中，提示放在按钮正上方
+    hint.style.left = '50%';
+    hint.style.transform = 'translateX(-50%)';
+    hint.style.bottom = `calc(${72 + 24 + 10}px + env(safe-area-inset-bottom))`;
+    hint.style.top = 'auto';
+  } else {
+    // 横屏：跟随Emergency按钮当前的位置
+    hint.style.transform = 'none';
+    hint.style.left = emergencyBtn.style.left;
+    hint.style.top = `calc(${emergencyBtn.style.top} - 34px)`;
+    hint.style.bottom = 'auto';
+  }
+}
+
 // ===== Emergency按钮 =====
 const emergencyBtn = document.getElementById('emergency-btn');
 const isMobile = 'ontouchstart' in window;
 
 function showEmergencyBtn() {
   if (!joiModel) return;
+  const portrait = window.innerWidth < window.innerHeight;
+  if (portrait) {
+    // 竖屏：固定在屏幕底部居中，不跟随Joi（避免被推到屏幕外）
+    emergencyBtn.style.left = '50%';
+    emergencyBtn.style.top = 'auto';
+    emergencyBtn.style.bottom = 'calc(24px + env(safe-area-inset-bottom))';
+    emergencyBtn.style.transform = 'translateX(-50%)';
+    emergencyBtn.style.display = 'block';
+    showEmergencyHintIfFirstTime();
+    return;
+  }
+  emergencyBtn.style.bottom = 'auto';
+  emergencyBtn.style.transform = 'none';
   // 将Joi的3D坐标投影到屏幕坐标
   const pos = joiModel.position.clone().project(camera);
   const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
@@ -731,6 +808,7 @@ function showEmergencyBtn() {
   emergencyBtn.style.left = `${x + 80}px`;
   emergencyBtn.style.top  = `${y - 36}px`;
   emergencyBtn.style.display = 'block';
+  showEmergencyHintIfFirstTime();
 }
 function hideEmergencyBtn() {
   emergencyBtn.style.display = 'none';
@@ -847,6 +925,7 @@ function onTeeterSuccess() {
     playSoundLand({ isTeeter: true });
     spawnNextPlatform();
     jumpCount++;
+    hideRuleTip();
     Stats.onLand(p.extras, p.isSpecial, !!p.group.userData.grassModel);
   }
   teeterCurrentPlatform = null;
@@ -962,6 +1041,7 @@ function checkLanding(landPos) {
       gameState = GameState.IDLE;
       spawnNextPlatform();
       jumpCount++;
+      hideRuleTip();
 
     } else {
       // ===== 普通落地 =====
@@ -983,6 +1063,7 @@ function checkLanding(landPos) {
       gameState = GameState.IDLE;
       spawnNextPlatform();
       jumpCount++;
+      hideRuleTip();
     }
     return true;
   }
@@ -1255,6 +1336,7 @@ function resetGame(seed) {
   isCharging = false;
   isJumping = false;
   jumpCount = 0;
+  showRuleTip();
   currentPlatformX = 0;
   currentPlatformZ = 0;
   fallVelocityY = 0;
@@ -1370,8 +1452,8 @@ function animate() {
     if (camera.position.distanceTo(cameraTargetPos) < 0.01 && !cameraLookTarget) cameraTargetPos = null;
   }
 
-  // Emergency按钮跟随Joi（Teeter期间）
-  if (teeterRescueOpen && joiModel) {
+  // Emergency按钮跟随Joi（Teeter期间，仅横屏；竖屏固定底部居中不跟随）
+  if (teeterRescueOpen && joiModel && window.innerWidth >= window.innerHeight) {
     const pos = joiModel.position.clone().project(camera);
     const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-pos.y * 0.5 + 0.5) * window.innerHeight;
@@ -1557,7 +1639,8 @@ function startIntroSequence() {
     currentActionName = 'StandingGreeting';
   }
 
-  setTimeout(() => { isGameActive = true; }, 3000);
+  showGreetingHello();
+  setTimeout(() => { hideGreetingHello(); isGameActive = true; }, 3000);
 }
 
 // ===================================================
