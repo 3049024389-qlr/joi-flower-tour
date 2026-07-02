@@ -1098,9 +1098,20 @@ function cancelCharge() {
 window.addEventListener('mousedown', onMouseDown);
 window.addEventListener('mousemove', onMouseMove);
 window.addEventListener('mouseup', onMouseUp);
-window.addEventListener('touchstart', (e) => { e.preventDefault(); onMouseDown(e.touches[0]); }, { passive: false });
-window.addEventListener('touchmove',  (e) => { e.preventDefault(); onMouseMove(e.touches[0]); }, { passive: false });
-window.addEventListener('touchend',   (e) => { onMouseUp(e.changedTouches[0]); });
+window.addEventListener('touchstart', (e) => {
+  if (e.target !== renderer.domElement) return; // 点在UI按钮/弹窗上，不拦截，交给按钮自己的click逻辑
+  e.preventDefault();
+  onMouseDown(e.touches[0]);
+}, { passive: false });
+window.addEventListener('touchmove', (e) => {
+  if (e.target !== renderer.domElement) return;
+  e.preventDefault();
+  onMouseMove(e.touches[0]);
+}, { passive: false });
+window.addEventListener('touchend', (e) => {
+  if (e.target !== renderer.domElement) return;
+  onMouseUp(e.changedTouches[0]);
+});
 
 // ===================================================
 // 窗口自适应（含手机竖屏适配）
