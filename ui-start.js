@@ -574,6 +574,25 @@ export function createStartScreen(onStart) {
     const email = authEmailInput.value.trim();
     const password = authPasswordInput.value;
     showAuthError(null);
+
+    // 手机上收起键盘，避免错误提示被键盘挡住看不见
+    authEmailInput.blur();
+    authPasswordInput.blur();
+
+    if (!email || !password) {
+      showAuthError('Please fill in both fields.');
+      return;
+    }
+    if (emailMode === 'signup' && password.length < 6) {
+      showAuthError('Password should be at least 6 characters.');
+      authErrorEl.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+
+    const originalText = authSubmitBtn.textContent;
+    authSubmitBtn.textContent = 'Please wait...';
+    authSubmitBtn.disabled = true;
+
     try {
       if (emailMode === 'signup') {
         await signUpWithEmail(email, password);
@@ -583,6 +602,10 @@ export function createStartScreen(onStart) {
       closeAuthModal();
     } catch (err) {
       showAuthError(friendlyAuthError(err));
+      authErrorEl.scrollIntoView({ block: 'nearest' });
+    } finally {
+      authSubmitBtn.textContent = originalText;
+      authSubmitBtn.disabled = false;
     }
   });
 
