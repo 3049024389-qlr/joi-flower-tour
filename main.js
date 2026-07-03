@@ -901,6 +901,7 @@ function setupAnimationFinishListener() {
           playBg('bgGame');
           startBirds();
           showRuleTip();
+          refreshRecordBaselines();
         }
         break;
       case 'Thankful':
@@ -1342,7 +1343,6 @@ function resetGame(seed) {
   Score.hasDogBonus = false;
   Stats.reset();
   resetScoreRecordState();
-  refreshRecordBaselines();
   updateScoreUI();
 
   gameState = GameState.IDLE;
