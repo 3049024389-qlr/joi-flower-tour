@@ -82,7 +82,15 @@ function initFirebase() {
   })();
   return initPromise;
 }
-initFirebase(); // 页面加载即在后台尝试，不阻塞任何东西
+// 不在页面加载时立即尝试连接（国内网络下gstatic.com可能长时间挂起而不是快速失败，
+// 会占用手机浏览器本就有限的并发连接名额，拖慢Joi模型等关键资源的加载）。
+// 改为等用户第一次点击/触屏之后才发起尝试，此时游戏关键资源大概率已经加载完毕。
+function scheduleLazyInit() {
+  const trigger = () => { initFirebase(); };
+  window.addEventListener('click', trigger, { once: true });
+  window.addEventListener('touchstart', trigger, { once: true, passive: true });
+}
+scheduleLazyInit();
 
 // 需要真正调用Firebase功能前先确认已就绪；失败则抛出统一错误，由调用方友好提示
 async function ensureReady() {
