@@ -654,7 +654,7 @@ async function openLeaderboardScreen() {
     }
   } catch (err) {
     console.warn('排行榜加载失败：', err);
-    bodyEl.innerHTML = `<div id="lb-empty">couldn't load leaderboard</div>`;
+    bodyEl.innerHTML = `<div id="lb-empty">Couldn't reach the leaderboard — this usually means the network can't access Google's servers. The game itself still works fine.</div>`;
   }
 }
 

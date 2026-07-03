@@ -1,39 +1,101 @@
 // ===================================================
 // Firebase 服务模块 firebase-services.js
-// 负责：Google登录 / 登出 / 保存单局记录 / 排行榜查询 / 破纪录基准查询
+// 负责：Google/GitHub/邮箱登录 / 保存单局记录 / 排行榜查询 / 破纪录基准查询
 //
-// 数据模型：scores 集合，每一局一条独立记录（自动生成文档ID）
-// 每个用户最多保留历史最佳 10 局，新纪录挤掉该用户已存记录里最低的一条
+// 重要：本文件不在顶部用静态 import 引入 firebase/* 包。
+// 原因：firebase/* 通过 importmap 指向 gstatic.com，国内网络若无法访问，
+// 静态 import 会导致"这个文件加载失败"，进而拖累所有 import 了本文件的
+// main.js / ui-start.js / ui-result.js 全部无法运行，整个游戏直接卡死。
+// 改成运行时才会真正尝试加载的 import()，并包一层容错：
+// 加载失败时，游戏本体完全不受影响，只有登录/排行榜相关功能优雅降级。
 // ===================================================
-import { initializeApp } from 'firebase/app';
-import {
-  getAuth, GoogleAuthProvider, GithubAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
-  createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail,
-} from 'firebase/auth';
-import {
-  getFirestore, collection, addDoc, deleteDoc,
-  query, where, orderBy, limit, getDocs, getCountFromServer,
-} from 'firebase/firestore';
 import { firebaseConfig } from './firebase-config.js';
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const googleProvider = new GoogleAuthProvider();
-const githubProvider = new GithubAuthProvider();
-
 const PER_USER_CAP = 10; // 每个用户最多保留的历史最佳局数
+
+// ===== SDK函数引用（动态加载成功后才会被填充） =====
+let _signInWithPopup, _signOut, _onAuthStateChanged;
+let _createUserWithEmailAndPassword, _signInWithEmailAndPassword, _sendPasswordResetEmail;
+let _collection, _addDoc, _deleteDoc, _query, _where, _orderBy, _limit, _getDocs, _getCountFromServer;
+
+let auth = null;
+let db = null;
+let googleProvider = null;
+let githubProvider = null;
+
+let firebaseReady = false;   // 加载并初始化成功
+let firebaseFailed = false;  // 加载失败（多半是网络无法访问Google服务）
+let initPromise = null;
 
 // ===== 登录状态 =====
 let currentUser = null;
 let authReady = false;
 const authListeners = [];
 
-onAuthStateChanged(auth, (user) => {
-  currentUser = user;
-  authReady = true;
-  authListeners.forEach((cb) => cb(user));
-});
+// ===== 懒加载 + 初始化Firebase（只会真正执行一次，后续调用复用同一个Promise） =====
+function initFirebase() {
+  if (initPromise) return initPromise;
+  initPromise = (async () => {
+    try {
+      const [appMod, authMod, fsMod] = await Promise.all([
+        import('firebase/app'),
+        import('firebase/auth'),
+        import('firebase/firestore'),
+      ]);
+
+      const app = appMod.initializeApp(firebaseConfig);
+      auth = authMod.getAuth(app);
+      db = fsMod.getFirestore(app);
+      googleProvider = new authMod.GoogleAuthProvider();
+      githubProvider = new authMod.GithubAuthProvider();
+
+      _signInWithPopup = authMod.signInWithPopup;
+      _signOut = authMod.signOut;
+      _onAuthStateChanged = authMod.onAuthStateChanged;
+      _createUserWithEmailAndPassword = authMod.createUserWithEmailAndPassword;
+      _signInWithEmailAndPassword = authMod.signInWithEmailAndPassword;
+      _sendPasswordResetEmail = authMod.sendPasswordResetEmail;
+
+      _collection = fsMod.collection;
+      _addDoc = fsMod.addDoc;
+      _deleteDoc = fsMod.deleteDoc;
+      _query = fsMod.query;
+      _where = fsMod.where;
+      _orderBy = fsMod.orderBy;
+      _limit = fsMod.limit;
+      _getDocs = fsMod.getDocs;
+      _getCountFromServer = fsMod.getCountFromServer;
+
+      _onAuthStateChanged(auth, (user) => {
+        currentUser = user;
+        authReady = true;
+        authListeners.forEach((cb) => cb(user));
+      });
+
+      firebaseReady = true;
+    } catch (err) {
+      console.warn('Firebase 加载失败（可能是当前网络无法访问Google服务）：', err);
+      firebaseFailed = true;
+      authReady = true;
+      authListeners.forEach((cb) => cb(null)); // 让登录UI正常显示"未登录"状态，不用一直转圈等待
+    }
+  })();
+  return initPromise;
+}
+initFirebase(); // 页面加载即在后台尝试，不阻塞任何东西
+
+// 需要真正调用Firebase功能前先确认已就绪；失败则抛出统一错误，由调用方友好提示
+async function ensureReady() {
+  await initFirebase();
+  if (firebaseFailed) {
+    const err = new Error('Firebase service unavailable');
+    err.code = 'app/unavailable';
+    throw err;
+  }
+}
+
+export function isFirebaseAvailable() { return firebaseReady; }
+export function isFirebaseUnavailable() { return firebaseFailed; }
 
 export function onAuthChange(cb) {
   authListeners.push(cb);
@@ -46,40 +108,45 @@ export function getCurrentUser() {
 
 // ===== 登录 / 登出 =====
 export async function signInWithGoogle() {
-  const result = await signInWithPopup(auth, googleProvider);
+  await ensureReady();
+  const result = await _signInWithPopup(auth, googleProvider);
   return result.user;
 }
 
 export async function signInWithGithub() {
-  const result = await signInWithPopup(auth, githubProvider);
+  await ensureReady();
+  const result = await _signInWithPopup(auth, githubProvider);
   return result.user;
 }
 
 export async function signUpWithEmail(email, password) {
-  const result = await createUserWithEmailAndPassword(auth, email, password);
+  await ensureReady();
+  const result = await _createUserWithEmailAndPassword(auth, email, password);
   return result.user;
 }
 
 export async function signInWithEmail(email, password) {
-  const result = await signInWithEmailAndPassword(auth, email, password);
+  await ensureReady();
+  const result = await _signInWithEmailAndPassword(auth, email, password);
   return result.user;
 }
 
 export async function resetPassword(email) {
-  await sendPasswordResetEmail(auth, email);
+  await ensureReady();
+  await _sendPasswordResetEmail(auth, email);
 }
 
 export async function signOutUser() {
-  await signOut(auth);
+  await ensureReady();
+  await _signOut(auth);
 }
 
 // ===== 保存单局记录 =====
-// stats: { score, maxCombo, margaritaCount, calendulaCount, grassCount, eggCount, chickenCount, basketCount, dogCount }
-// 返回 { saved: true/false, replaced?: true }；未登录时返回 { saved: false, reason: 'not-signed-in' }
 export async function saveRoundScore(stats) {
   if (!currentUser) return { saved: false, reason: 'not-signed-in' };
+  await ensureReady(); // currentUser非空说明之前已经加载成功过，这里几乎必定秒过
 
-  const scoresRef = collection(db, 'scores');
+  const scoresRef = _collection(db, 'scores');
   const record = {
     uid: currentUser.uid,
     displayName: currentUser.displayName || currentUser.email || 'Anonymous',
@@ -96,21 +163,20 @@ export async function saveRoundScore(stats) {
     createdAt: Date.now(),
   };
 
-  // 拿这个用户已存的所有记录，按分数升序（最低的排最前面）
-  const q = query(scoresRef, where('uid', '==', currentUser.uid), orderBy('score', 'asc'));
-  const snap = await getDocs(q);
+  const q = _query(scoresRef, _where('uid', '==', currentUser.uid), _orderBy('score', 'asc'));
+  const snap = await _getDocs(q);
   const docs = snap.docs;
 
   if (docs.length < PER_USER_CAP) {
-    await addDoc(scoresRef, record);
+    await _addDoc(scoresRef, record);
     return { saved: true };
   }
 
   const lowest = docs[0];
   const lowestScore = lowest.data().score || 0;
   if (record.score > lowestScore) {
-    await deleteDoc(lowest.ref);
-    await addDoc(scoresRef, record);
+    await _deleteDoc(lowest.ref);
+    await _addDoc(scoresRef, record);
     return { saved: true, replaced: true };
   }
   return { saved: false, reason: 'below-personal-cap' };
@@ -118,39 +184,43 @@ export async function saveRoundScore(stats) {
 
 // ===== 排行榜 Top N（默认100，按局排名，同一人可多条） =====
 export async function fetchLeaderboard(topN = 100) {
-  const q = query(collection(db, 'scores'), orderBy('score', 'desc'), limit(topN));
-  const snap = await getDocs(q);
+  await ensureReady();
+  const q = _query(_collection(db, 'scores'), _orderBy('score', 'desc'), _limit(topN));
+  const snap = await _getDocs(q);
   return snap.docs.map((d, i) => ({ id: d.id, rank: i + 1, ...d.data() }));
 }
 
-// ===== 当前用户历史最佳一局的分数（未登录返回 null） =====
+// ===== 当前用户历史最佳一局的分数（未登录/不可用返回 null） =====
 export async function getPersonalBest() {
   if (!currentUser) return null;
-  const q = query(
-    collection(db, 'scores'),
-    where('uid', '==', currentUser.uid),
-    orderBy('score', 'desc'),
-    limit(1)
+  await ensureReady();
+  const q = _query(
+    _collection(db, 'scores'),
+    _where('uid', '==', currentUser.uid),
+    _orderBy('score', 'desc'),
+    _limit(1)
   );
-  const snap = await getDocs(q);
+  const snap = await _getDocs(q);
   if (snap.empty) return null;
   return snap.docs[0].data().score;
 }
 
-// ===== 全局最高分（世界记录，任何人都能比，空榜返回0） =====
+// ===== 全局最高分（世界记录，不可用时返回 null 而不是抛错，方便main.js直接判断跳过） =====
 export async function getGlobalBest() {
-  const q = query(collection(db, 'scores'), orderBy('score', 'desc'), limit(1));
-  const snap = await getDocs(q);
+  await ensureReady();
+  const q = _query(_collection(db, 'scores'), _orderBy('score', 'desc'), _limit(1));
+  const snap = await _getDocs(q);
   if (snap.empty) return 0;
   return snap.docs[0].data().score;
 }
 
-// ===== 当前用户"历史最佳一局"的真实全局排名（未登录返回 null） =====
+// ===== 当前用户"历史最佳一局"的真实全局排名 =====
 export async function getUserBestRank() {
   if (!currentUser) return null;
+  await ensureReady();
   const best = await getPersonalBest();
   if (best == null) return null;
-  const q = query(collection(db, 'scores'), where('score', '>', best));
-  const countSnap = await getCountFromServer(q);
+  const q = _query(_collection(db, 'scores'), _where('score', '>', best));
+  const countSnap = await _getCountFromServer(q);
   return countSnap.data().count + 1;
 }

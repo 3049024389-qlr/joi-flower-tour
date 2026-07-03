@@ -476,6 +476,7 @@ export function createStartScreen(onStart) {
 
   function friendlyAuthError(err) {
     const code = err?.code || '';
+    if (code.includes('app/unavailable')) return "Sign-in isn't available right now — this usually means the network can't reach Google's servers. The game itself still works fine without signing in.";
     if (code.includes('wrong-password') || code.includes('invalid-credential')) return 'Incorrect email or password.';
     if (code.includes('user-not-found')) return 'No account found with this email.';
     if (code.includes('email-already-in-use')) return 'An account already exists with this email.';
